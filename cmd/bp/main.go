@@ -7,14 +7,13 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/signal"
 	"runtime"
 	"strings"
 	"time"
 
-	"github.com/grandcat/zeroconf"
+	dh "jonwillia.ms/deepwater-horizon"
 )
-
-const Service = "_ssh._tcp"
 
 func Must0(err error)                       { must[any](nil, err) }
 func Must[T0 any](a0 T0, err error) (v0 T0) { return must(a0, err) }
@@ -48,17 +47,34 @@ func must[T0 any](a0 T0, err error) (v0 T0) {
 }
 
 func main() {
-	ctx := context.Background()
-	ctx, cancel := context.WithTimeout(ctx, time.Second)
-	defer cancel()
-	resolver := Must(zeroconf.NewResolver(nil))
 
+	listenFlag := flag.Bool("listen", false, "listen")
 	flag.Parse()
-	instance := flag.Arg(0)
+	name := flag.Arg(0)
 
-	entries := make(chan *zeroconf.ServiceEntry)
-	Must0(resolver.Lookup(ctx, instance, Service, "local.", entries))
-	for entry := range entries {
-		fmt.Println(entry)
+	agent := Must(dh.LoadAgent())
+
+	var run func(ctx context.Context) error
+
+	if *listenFlag {
+		log.Println("listen")
+		s := dh.NewServer(name, agent)
+		run = s.Run
+	} else {
+		log.Println("locate")
+		l := dh.NewLocator(name)
+		run = l.Run
+
 	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	err := run(ctx)
+	if err != nil {
+		log.Fatalf("Run: %v", err)
+	}
+	<-ctx.Done()
 }
